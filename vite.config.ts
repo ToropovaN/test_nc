@@ -1,5 +1,5 @@
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  base: "/test_nc/",
+  base: "/test_nc/engineer-edition/",
 });
