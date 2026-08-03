@@ -10,22 +10,28 @@ export type Vector2 = {
 };
 
 export type Circle = {
-  id: string;
   position: Vector2;
   velocity: Vector2;
-  radius: number;
-  color: Color;
 };
 
-export type CircleEditorData = {
+export type SimulationConfig = {
   radius: number;
   speed: number;
   direction: number;
   color: Color;
+  restitution: number;
+  objectCount: number;
 };
 
 export type SimulationSave = {
   id: string;
   name: string;
+  config: SimulationConfig;
   circles: Circle[];
+};
+
+export type SimulationStats = {
+  fps: number;
+  physicsUpdatesPerSecond: number;
+  collisionsPerSecond: number;
 };

@@ -1,18 +1,25 @@
+import type { SimulationStats as SimulationStatsData } from "../../data/types";
+
 export class SimulationStats {
   readonly root = document.createElement("div");
 
-  private readonly circleCountValue: HTMLElement;
   private readonly fpsValue: HTMLElement;
+  private readonly physicsUpdatesPerSecondValue: HTMLElement;
+  private readonly collisionsPerSecondValue: HTMLElement;
 
   constructor() {
     this.root.className = "simulation-stats";
-    this.circleCountValue = this.createStat("Кругов");
     this.fpsValue = this.createStat("FPS");
+    this.physicsUpdatesPerSecondValue = this.createStat("Физика");
+    this.collisionsPerSecondValue = this.createStat("Столкновения");
   }
 
-  render(circleCount: number, fps: number): void {
-    this.circleCountValue.textContent = String(circleCount);
-    this.fpsValue.textContent = String(fps);
+  render(stats: SimulationStatsData): void {
+    this.fpsValue.textContent = String(stats.fps);
+    this.physicsUpdatesPerSecondValue.textContent =
+      `${stats.physicsUpdatesPerSecond} / сек`;
+    this.collisionsPerSecondValue.textContent =
+      `${stats.collisionsPerSecond} / сек`;
   }
 
   private createStat(label: string): HTMLElement {

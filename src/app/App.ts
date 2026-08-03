@@ -2,16 +2,11 @@ import { AppRender } from "./Render";
 import { Physics } from "./Physics";
 import { AppInterface } from "./interface/AppInterface";
 import { SimulationStorage } from "./Storage";
-import type { Circle, CircleEditorData } from "../data/types";
-import { createRandomColor, randomBetween } from "../utils/utils";
+import type { Circle, SimulationConfig } from "../data/types";
+import { randomBetween } from "../utils/utils";
 import {
-  FIXED_TIME_STEP,
-  INITIAL_CIRCLE_COUNT,
-  MAX_CIRCLE_RADIUS,
-  MAX_CIRCLE_SPEED,
+  DEFAULT_FIXED_TIME_STEP,
   MAX_FRAME_TIME,
-  MIN_CIRCLE_RADIUS,
-  MIN_CIRCLE_SPEED,
 } from "../data/constants";
 
 export class App {
@@ -24,10 +19,13 @@ export class App {
 
   private readonly resizeObserver: ResizeObserver;
 
+  private config: SimulationConfig | null = null;
   private previousTime: number | null = null;
   private statsStartTime: number | null = null;
   private renderedFrames = 0;
-  private activeCircleId: string | null = null;
+  private physicsUpdateCount = 0;
+  private collisionCount = 0;
+  private fixedTimeStep = DEFAULT_FIXED_TIME_STEP;
   private accumulatedTime = 0;
 
   constructor(canvas: HTMLCanvasElement, root: HTMLElement) {
@@ -37,24 +35,22 @@ export class App {
 
     this.resizeObserver = new ResizeObserver(this.resizeCanvas);
     this.resizeCanvas();
-    this.circles = Array.from({ length: INITIAL_CIRCLE_COUNT }, () =>
-      this.createRandomCircle(this.renderer.width, this.renderer.height),
-    );
+    this.circles = [];
 
     this.interface = new AppInterface(root, {
-      onAddCircles: this.addRandomCircles,
+      onStart: this.startSimulation,
       onReset: this.resetCircles,
       onSave: this.saveSimulation,
       onLoadSave: this.loadSimulation,
       onDeleteSave: this.deleteSave,
-      onDeleteCircle: this.deleteCircle,
-      onSelectCircle: this.selectCircle,
-      onApplyCircle: this.applyCircleChanges,
     });
 
-    this.interface.updateCircleCards(this.circles);
     this.interface.initSavesList(this.storage.getSavesList());
-    this.interface.renderStats(this.circles.length, 0);
+    this.interface.renderStats({
+      fps: 0,
+      physicsUpdatesPerSecond: 0,
+      collisionsPerSecond: 0,
+    });
     this.resizeObserver.observe(canvas);
     requestAnimationFrame(this.loop);
   }
@@ -67,73 +63,57 @@ export class App {
     );
   };
 
-  private createRandomCircle(width: number, height: number): Circle {
-    const radius = Math.round(
-      randomBetween(MIN_CIRCLE_RADIUS, MAX_CIRCLE_RADIUS),
-    );
-    const speed = randomBetween(MIN_CIRCLE_SPEED, MAX_CIRCLE_SPEED);
-    const direction = randomBetween(0, Math.PI * 2);
+  private createCircle(config: SimulationConfig): Circle {
+    const direction = (config.direction * Math.PI) / 180;
 
     return {
-      id: crypto.randomUUID(),
       position: {
         x:
-          width >= radius * 2
-            ? randomBetween(radius, width - radius)
-            : width / 2,
+          this.renderer.width >= config.radius * 2
+            ? randomBetween(config.radius, this.renderer.width - config.radius)
+            : this.renderer.width / 2,
         y:
-          height >= radius * 2
-            ? randomBetween(radius, height - radius)
-            : height / 2,
+          this.renderer.height >= config.radius * 2
+            ? randomBetween(
+                config.radius,
+                this.renderer.height - config.radius,
+              )
+            : this.renderer.height / 2,
       },
       velocity: {
-        x: Math.cos(direction) * speed,
-        y: Math.sin(direction) * speed,
+        x: Math.cos(direction) * config.speed,
+        y: Math.sin(direction) * config.speed,
       },
-      radius,
-      color: createRandomColor(),
     };
   }
 
-  private readonly addRandomCircles = (count: number): void => {
-    const addedCircles: Circle[] = [];
-
-    for (let circleIndex = 0; circleIndex < count; circleIndex += 1) {
-      const circle = this.createRandomCircle(
-        this.renderer.width,
-        this.renderer.height,
-      );
-
-      this.circles.push(circle);
-      addedCircles.push(circle);
+  private readonly startSimulation = (config: SimulationConfig): void => {
+    this.config = config;
+    this.fixedTimeStep = this.calculateFixedTimeStep(config);
+    this.accumulatedTime = 0;
+    this.resetPhysicsStats();
+    this.circles.splice(0);
+    for (let index = 0; index < config.objectCount; index += 1) {
+      this.circles.push(this.createCircle(config));
     }
-
-    this.interface.addCircleCards(addedCircles);
-  };
-
-  private readonly deleteCircle = (id: string): void => {
-    const circleIndex = this.circles.findIndex((circle) => circle.id === id);
-
-    if (circleIndex === -1) {
-      return;
-    }
-
-    this.circles.splice(circleIndex, 1);
-    if (this.activeCircleId === id) {
-      this.activeCircleId = null;
-      this.interface.setActiveCircle(undefined);
-    }
-    this.interface.removeCircleCard(this.circles);
+    this.renderer.configure(config);
   };
 
   private readonly resetCircles = (): void => {
     this.circles.splice(0);
-    this.activeCircleId = null;
-    this.interface.updateCircleCards([]);
+    this.config = null;
+    this.fixedTimeStep = DEFAULT_FIXED_TIME_STEP;
+    this.accumulatedTime = 0;
+    this.resetPhysicsStats();
   };
 
   private readonly saveSimulation = (): void => {
-    const createdSave = this.storage.createSaveItem(this.circles);
+    if (!this.config) return;
+
+    const createdSave = this.storage.createSaveItem(
+      this.config,
+      this.circles,
+    );
 
     this.interface.addSaveItem(createdSave);
     this.interface.showSaveNotification(createdSave.name);
@@ -147,40 +127,18 @@ export class App {
     for (const circle of save.circles) {
       this.circles.push(circle);
     }
-    this.activeCircleId = null;
-    this.interface.updateCircleCards(this.circles);
+    this.config = save.config;
+    this.fixedTimeStep = this.calculateFixedTimeStep(save.config);
+    this.accumulatedTime = 0;
+    this.resetPhysicsStats();
+    this.renderer.configure(save.config);
+    this.interface.setConfig(save.config);
+    this.interface.setRunning(true);
   };
 
   private readonly deleteSave = (id: string): void => {
     this.storage.deleteSaveItem(id);
     this.interface.removeSaveItem(id);
-  };
-
-  private readonly selectCircle = (id: string): void => {
-    this.activeCircleId = this.activeCircleId === id ? null : id;
-    const activeCircle = this.circles.find(
-      (circle) => circle.id === this.activeCircleId,
-    );
-    this.interface.setActiveCircle(activeCircle);
-  };
-
-  private readonly applyCircleChanges = (
-    id: string,
-    editorData: CircleEditorData,
-  ): void => {
-    const circle = this.circles.find((item) => item.id === id);
-
-    if (!circle) return;
-
-    circle.radius = editorData.radius;
-    const directionInRadians = (editorData.direction * Math.PI) / 180;
-
-    circle.velocity.x = Math.cos(directionInRadians) * editorData.speed;
-    circle.velocity.y = Math.sin(directionInRadians) * editorData.speed;
-    circle.color = editorData.color;
-    this.activeCircleId = null;
-    this.interface.updateCircle(circle);
-    this.interface.setActiveCircle(undefined);
   };
 
   private readonly loop = (currentTime: number): void => {
@@ -194,20 +152,23 @@ export class App {
     );
 
     this.previousTime = currentTime;
-    this.accumulatedTime += frameTime;
-
-    while (this.accumulatedTime >= FIXED_TIME_STEP) {
-      this.physics.update(
-        this.circles,
-        FIXED_TIME_STEP,
-        this.renderer.width,
-        this.renderer.height,
-        this.activeCircleId,
-      );
-      this.accumulatedTime -= FIXED_TIME_STEP;
+    if (this.config) {
+      this.accumulatedTime += frameTime;
     }
 
-    this.renderer.render(this.circles, this.activeCircleId, currentTime);
+    while (this.config && this.accumulatedTime >= this.fixedTimeStep) {
+      this.collisionCount += this.physics.update(
+        this.circles,
+        this.config,
+        this.fixedTimeStep,
+        this.renderer.width,
+        this.renderer.height,
+      );
+      this.physicsUpdateCount += 1;
+      this.accumulatedTime -= this.fixedTimeStep;
+    }
+
+    this.renderer.render(this.circles);
     this.renderedFrames += 1;
     this.updateStats(currentTime);
 
@@ -228,8 +189,42 @@ export class App {
 
     const fps = Math.round((this.renderedFrames * 1000) / elapsedTime);
 
-    this.interface.renderStats(this.circles.length, fps);
+    const physicsUpdatesPerSecond = Math.round(
+      (this.physicsUpdateCount * 1000) / elapsedTime,
+    );
+    const collisionsPerSecond = Math.round(
+      (this.collisionCount * 1000) / elapsedTime,
+    );
+
+    this.interface.renderStats({
+      fps,
+      physicsUpdatesPerSecond,
+      collisionsPerSecond,
+    });
     this.statsStartTime = currentTime;
     this.renderedFrames = 0;
+    this.physicsUpdateCount = 0;
+    this.collisionCount = 0;
+  }
+
+  private resetPhysicsStats(): void {
+    this.physicsUpdateCount = 0;
+    this.collisionCount = 0;
+  }
+
+  private calculateFixedTimeStep(config: SimulationConfig): number {
+    if (config.speed === 0) {
+      return DEFAULT_FIXED_TIME_STEP;
+    }
+
+    const distancePerDefaultStep =
+      config.speed * DEFAULT_FIXED_TIME_STEP;
+    const allowedDistancePerStep = config.radius * 0.5;
+
+    if (distancePerDefaultStep <= allowedDistancePerStep) {
+      return DEFAULT_FIXED_TIME_STEP;
+    }
+
+    return allowedDistancePerStep / config.speed;
   }
 }

@@ -1,6 +1,7 @@
-import type { Circle, CircleEditorData } from "../../data/types";
+import type { SimulationConfig } from "../../data/types";
 import {
   DEFAULT_EDITOR_COLOR,
+  INITIAL_CIRCLE_COUNT,
   MAX_CIRCLE_RADIUS,
   MAX_CIRCLE_SPEED,
   MIN_CIRCLE_RADIUS,
@@ -8,11 +9,10 @@ import {
 } from "../../data/constants";
 import {
   colorFromInputValue,
-  colorToCss,
   colorToInputValue,
   fitValueIntoRange,
 } from "../../utils/utils";
-import { createButton } from "../../utils/domHelpers";
+import { createButton, createIcon } from "../../utils/domHelpers";
 
 type CircleEditorView = {
   previewCircle: HTMLElement;
@@ -20,24 +20,24 @@ type CircleEditorView = {
   radiusOutput: HTMLOutputElement;
   speedInput: HTMLInputElement;
   speedOutput: HTMLOutputElement;
+  restitutionInput: HTMLInputElement;
+  restitutionOutput: HTMLOutputElement;
   colorInput: HTMLInputElement;
   colorOutput: HTMLOutputElement;
   directionDial: HTMLButtonElement;
   directionDialArrow: HTMLElement;
   directionOutput: HTMLOutputElement;
-  applyButton: HTMLButtonElement;
+  quantityInput: HTMLInputElement;
+  decreaseQuantityButton: HTMLButtonElement;
+  increaseQuantityButton: HTMLButtonElement;
 };
 
 export class CircleEditor {
-  readonly root = document.createElement("section");
+  readonly root = document.createElement("fieldset");
 
   private readonly view: CircleEditorView;
-  private readonly onApply: (id: string, data: CircleEditorData) => void;
-  private activeCircleId: string | null = null;
 
-  constructor(onApply: (id: string, data: CircleEditorData) => void) {
-    this.onApply = onApply;
-
+  constructor() {
     this.root.className = "circle-editor";
 
     this.view = {
@@ -46,12 +46,16 @@ export class CircleEditor {
       radiusOutput: document.createElement("output"),
       speedInput: document.createElement("input"),
       speedOutput: document.createElement("output"),
+      restitutionInput: document.createElement("input"),
+      restitutionOutput: document.createElement("output"),
       colorInput: document.createElement("input"),
       colorOutput: document.createElement("output"),
       directionDial: createButton("", "direction-dial"),
       directionDialArrow: document.createElement("span"),
       directionOutput: document.createElement("output"),
-      applyButton: createButton("Сохранить", "circle-editor__apply"),
+      quantityInput: document.createElement("input"),
+      decreaseQuantityButton: createButton("", "quantity-button"),
+      increaseQuantityButton: createButton("", "quantity-button"),
     };
 
     const editorForm = document.createElement("div");
@@ -67,27 +71,68 @@ export class CircleEditor {
     const previewLabel = document.createElement("span");
     previewLabel.className = "circle-editor__section-label";
     previewLabel.textContent = "Превью";
-    previewSection.append(previewLabel, editorPreview);
 
-    this.view.radiusInput.type = "range";
-    this.view.radiusInput.min = String(MIN_CIRCLE_RADIUS);
-    this.view.radiusInput.max = String(MAX_CIRCLE_RADIUS);
-    this.view.radiusInput.step = "1";
+    const quantityLabel = document.createElement("label");
+    quantityLabel.className = "circle-editor__quantity-label";
+    quantityLabel.textContent = "Количество объектов";
+
+    this.view.quantityInput.type = "number";
+    this.view.quantityInput.className = "circle-quantity-input";
+    this.view.quantityInput.min = "1";
+    this.view.quantityInput.step = "1";
+    this.view.quantityInput.addEventListener("change", this.normalizeQuantity);
+
+    this.view.decreaseQuantityButton.append(createIcon("icon icon--minus"));
+    this.view.decreaseQuantityButton.addEventListener("click", () => {
+      this.view.quantityInput.stepDown();
+      this.normalizeQuantity();
+    });
+    this.view.increaseQuantityButton.append(createIcon("icon icon--plus"));
+    this.view.increaseQuantityButton.addEventListener("click", () => {
+      this.view.quantityInput.stepUp();
+      this.normalizeQuantity();
+    });
+
+    const quantityStepper = document.createElement("div");
+    quantityStepper.className = "quantity-stepper";
+    quantityStepper.append(
+      this.view.decreaseQuantityButton,
+      this.view.quantityInput,
+      this.view.increaseQuantityButton,
+    );
+    quantityLabel.append(quantityStepper);
+    previewSection.append(previewLabel, editorPreview, quantityLabel);
+
+    this.setupRangeInput(
+      this.view.radiusInput,
+      MIN_CIRCLE_RADIUS,
+      MAX_CIRCLE_RADIUS,
+      1,
+    );
     const radiusEditor = this.createEditorField(
       "Радиус",
       this.view.radiusInput,
+      this.view.radiusOutput,
     );
-    radiusEditor.append(this.view.radiusOutput);
 
-    this.view.speedInput.type = "range";
-    this.view.speedInput.min = String(MIN_CIRCLE_SPEED);
-    this.view.speedInput.max = String(MAX_CIRCLE_SPEED);
-    this.view.speedInput.step = "1";
+    this.setupRangeInput(
+      this.view.speedInput,
+      MIN_CIRCLE_SPEED,
+      MAX_CIRCLE_SPEED,
+      1,
+    );
     const speedEditor = this.createEditorField(
       "Скорость",
       this.view.speedInput,
+      this.view.speedOutput,
     );
-    speedEditor.append(this.view.speedOutput);
+
+    this.setupRangeInput(this.view.restitutionInput, 0, 1, 0.01);
+    const restitutionEditor = this.createEditorField(
+      "Упругость",
+      this.view.restitutionInput,
+      this.view.restitutionOutput,
+    );
 
     this.view.colorInput.type = "color";
     this.view.colorInput.className = "color-input";
@@ -101,9 +146,12 @@ export class CircleEditor {
       this.view.directionOutput,
     );
 
-    this.view.applyButton.addEventListener("click", this.applyChanges);
     this.view.radiusInput.addEventListener("input", this.updateRadiusOutput);
     this.view.speedInput.addEventListener("input", this.updateSpeedOutput);
+    this.view.restitutionInput.addEventListener(
+      "input",
+      this.updateRestitutionOutput,
+    );
     this.view.colorInput.addEventListener("input", this.updateColorOutput);
     this.setupDirectionDial(this.view.directionDial);
 
@@ -124,58 +172,75 @@ export class CircleEditor {
     const editorBottomControls = document.createElement("div");
     editorBottomControls.className = "circle-editor__bottom-controls";
     editorBottomControls.append(directionControl, colorControl);
-    editorFields.append(radiusEditor, speedEditor, editorBottomControls);
-    editorForm.append(editorFields, previewSection, this.view.applyButton);
+    editorFields.append(
+      radiusEditor,
+      speedEditor,
+      restitutionEditor,
+      editorBottomControls,
+    );
+    editorForm.append(editorFields, previewSection);
     this.root.append(editorForm);
 
-    this.setCircle(undefined);
+    this.setConfig({
+      radius: MAX_CIRCLE_RADIUS / 2,
+      speed: MAX_CIRCLE_SPEED / 2,
+      direction: 90,
+      color: DEFAULT_EDITOR_COLOR,
+      restitution: 1,
+      objectCount: INITIAL_CIRCLE_COUNT,
+    });
   }
 
-  setCircle(circle: Circle | undefined): void {
-    this.activeCircleId = circle?.id ?? null;
-    const isEmpty = !circle;
-    this.root.classList.toggle("circle-editor--empty", isEmpty);
-    this.view.radiusInput.disabled = isEmpty;
-    this.view.speedInput.disabled = isEmpty;
-    this.view.colorInput.disabled = isEmpty;
-    this.view.directionDial.disabled = isEmpty;
-    this.view.applyButton.disabled = isEmpty;
+  getConfig(): SimulationConfig {
+    this.normalizeQuantity();
 
-    if (isEmpty) {
-      this.view.colorInput.value = colorToInputValue(DEFAULT_EDITOR_COLOR);
-      this.view.radiusOutput.value = "";
-      this.view.speedOutput.value = "";
-      this.view.directionOutput.value = "";
-      this.view.colorOutput.value = "";
-      this.view.previewCircle.style.width = "64%";
-      this.view.previewCircle.style.height = "64%";
-      this.view.previewCircle.style.backgroundColor =
-        colorToCss(DEFAULT_EDITOR_COLOR);
-      return;
-    }
-
-    const speed = Math.hypot(circle.velocity.x, circle.velocity.y);
-    const direction =
-      (Math.atan2(circle.velocity.y, circle.velocity.x) * 180) / Math.PI;
-    this.view.radiusInput.value = String(circle.radius);
-    this.view.speedInput.value = String(Math.round(speed));
-    this.view.colorInput.value = colorToInputValue(circle.color);
-
-    this.setDirection((direction + 360) % 360);
-    this.updateRadiusOutput();
-    this.updateSpeedOutput();
-    this.updateColorOutput();
-  }
-
-  private readonly applyChanges = (): void => {
-    if (!this.activeCircleId) return;
-
-    this.onApply(this.activeCircleId, {
+    return {
       radius: Number(this.view.radiusInput.value),
       speed: Number(this.view.speedInput.value),
       direction: Number(this.view.directionDial.dataset["direction"] ?? 0),
       color: colorFromInputValue(this.view.colorInput.value),
-    });
+      restitution: Number(this.view.restitutionInput.value),
+      objectCount: Number(this.view.quantityInput.value),
+    };
+  }
+
+  setConfig(config: SimulationConfig): void {
+    this.view.radiusInput.value = String(config.radius);
+    this.view.speedInput.value = String(config.speed);
+    this.view.colorInput.value = colorToInputValue(config.color);
+    this.view.restitutionInput.value = String(config.restitution);
+    this.view.quantityInput.value = String(config.objectCount);
+    this.setDirection(config.direction);
+    this.updateRadiusOutput();
+    this.updateSpeedOutput();
+    this.updateRestitutionOutput();
+    this.updateColorOutput();
+    this.normalizeQuantity();
+  }
+
+  setDisabled(disabled: boolean): void {
+    this.root.disabled = disabled;
+    this.root.classList.toggle("circle-editor--disabled", disabled);
+  }
+
+  private setupRangeInput(
+    input: HTMLInputElement,
+    min: number,
+    max: number,
+    step: number,
+  ): void {
+    input.type = "range";
+    input.min = String(min);
+    input.max = String(max);
+    input.step = String(step);
+  }
+
+  private readonly normalizeQuantity = (): void => {
+    const quantity = Math.max(
+      1,
+      Math.floor(Number(this.view.quantityInput.value) || 1),
+    );
+    this.view.quantityInput.value = String(quantity);
   };
 
   private setupDirectionDial(dial: HTMLButtonElement): void {
@@ -221,6 +286,12 @@ export class CircleEditor {
     this.view.speedOutput.value = `${this.view.speedInput.value} px/s`;
   };
 
+  private readonly updateRestitutionOutput = (): void => {
+    this.view.restitutionOutput.value = Number(
+      this.view.restitutionInput.value,
+    ).toFixed(2);
+  };
+
   private readonly updateColorOutput = (): void => {
     const color = this.view.colorInput.value;
     this.view.colorOutput.value = color.toUpperCase();
@@ -236,7 +307,7 @@ export class CircleEditor {
   private getPreviewSize(radius: number): string {
     const previewPercent = fitValueIntoRange(
       (radius / MAX_CIRCLE_RADIUS) * 100,
-      8,
+      3,
       100,
     );
     return `${previewPercent}%`;
@@ -245,13 +316,14 @@ export class CircleEditor {
   private createEditorField(
     labelText: string,
     control: HTMLInputElement,
+    output: HTMLOutputElement,
   ): HTMLElement {
     const field = document.createElement("label");
     field.className = "editor-field";
     const text = document.createElement("span");
     text.className = "editor-field__label";
     text.textContent = labelText;
-    field.append(text, control);
+    field.append(text, control, output);
     return field;
   }
 
@@ -266,5 +338,4 @@ export class CircleEditor {
     row.append(label, output);
     return row;
   }
-
 }

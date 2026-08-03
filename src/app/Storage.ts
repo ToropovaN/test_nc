@@ -1,4 +1,9 @@
-import type { Circle, Color, SimulationSave } from "../data/types";
+import type {
+  Circle,
+  Color,
+  SimulationConfig,
+  SimulationSave,
+} from "../data/types";
 
 const STORAGE_KEY = "circle-simulation-saves";
 
@@ -15,6 +20,7 @@ function parseColor(value: unknown): Color | undefined {
   if (!value || typeof value !== "object") return undefined;
 
   const color = value as Partial<Color>;
+
   if (
     !isColorChannel(color.r) ||
     !isColorChannel(color.g) ||
@@ -32,29 +38,48 @@ function parseCircle(value: unknown): Circle | undefined {
   const circle = value as Partial<Circle>;
   const position = circle.position;
   const velocity = circle.velocity;
-  const color = parseColor(circle.color);
 
   if (
-    typeof circle.id !== "string" ||
     !position ||
     !velocity ||
     !Number.isFinite(position.x) ||
     !Number.isFinite(position.y) ||
     !Number.isFinite(velocity.x) ||
-    !Number.isFinite(velocity.y) ||
-    typeof circle.radius !== "number" ||
-    !Number.isFinite(circle.radius) ||
+    !Number.isFinite(velocity.y)
+  ) {
+    return undefined;
+  }
+
+  return {
+    position: { x: position.x, y: position.y },
+    velocity: { x: velocity.x, y: velocity.y },
+  };
+}
+
+function parseConfig(value: unknown): SimulationConfig | undefined {
+  if (!value || typeof value !== "object") return undefined;
+
+  const config = value as Partial<SimulationConfig>;
+  const color = parseColor(config.color);
+
+  if (
+    typeof config.radius !== "number" ||
+    typeof config.speed !== "number" ||
+    typeof config.direction !== "number" ||
+    typeof config.restitution !== "number" ||
+    typeof config.objectCount !== "number" ||
     !color
   ) {
     return undefined;
   }
 
   return {
-    id: circle.id,
-    position: { x: position.x, y: position.y },
-    velocity: { x: velocity.x, y: velocity.y },
-    radius: circle.radius,
+    radius: config.radius,
+    speed: config.speed,
+    direction: config.direction,
     color,
+    restitution: config.restitution,
+    objectCount: config.objectCount,
   };
 }
 
@@ -73,10 +98,12 @@ export class SimulationStorage {
         if (!item || typeof item !== "object") continue;
 
         const storedSave = item as Partial<SimulationSave>;
+        const config = parseConfig(storedSave.config);
 
         if (
           typeof storedSave.id !== "string" ||
           typeof storedSave.name !== "string" ||
+          !config ||
           !Array.isArray(storedSave.circles)
         ) {
           continue;
@@ -89,6 +116,7 @@ export class SimulationStorage {
         saves.push({
           id: storedSave.id,
           name: storedSave.name,
+          config,
           circles,
         });
       }
@@ -99,13 +127,14 @@ export class SimulationStorage {
     }
   }
 
-  createSaveItem(circles: Circle[]): SimulationSave {
+  createSaveItem(config: SimulationConfig, circles: Circle[]): SimulationSave {
     const now = new Date();
     const milliseconds = String(now.getMilliseconds()).padStart(3, "0");
     const save: SimulationSave = {
       id: crypto.randomUUID(),
       name: `${now.toLocaleString("ru-RU")}.${milliseconds}`,
-      circles: circles,
+      config,
+      circles,
     };
     const saves = [save, ...this.getSavesList()];
 

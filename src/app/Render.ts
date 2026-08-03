@@ -1,10 +1,7 @@
-import type { Circle } from "../data/types";
+import type { Circle, SimulationConfig } from "../data/types";
 import {
-  ACTIVE_CIRCLE_PULSE_DURATION,
   CANVAS_BACKGROUND_COLOR,
   FRAGMENT_SHADER_SOURCE,
-  MAX_ACTIVE_CIRCLE_OPACITY,
-  MIN_ACTIVE_CIRCLE_OPACITY,
   VERTEX_SHADER_SOURCE,
 } from "../data/constants";
 import { colorToNormalizedRgb } from "../utils/utils";
@@ -17,10 +14,13 @@ export class AppRender {
 
   private readonly gl: WebGL2RenderingContext;
   private readonly program: WebGLProgram;
+  private readonly vertexArray: WebGLVertexArrayObject;
+  private readonly instanceBuffer: WebGLBuffer;
   private readonly colorLocation: WebGLUniformLocation;
-  private readonly centerLocation: WebGLUniformLocation;
   private readonly scaleLocation: WebGLUniformLocation;
 
+  private instanceData = new Float32Array(0);
+  private radius = 0;
   private logicalWidth = 1;
   private logicalHeight = 1;
 
@@ -35,32 +35,47 @@ export class AppRender {
 
     this.gl = gl;
     this.program = this.createProgram();
-    const positionLocation = gl.getAttribLocation(this.program, "a_position");
 
+    const positionLocation = gl.getAttribLocation(this.program, "a_position");
+    const centerLocation = gl.getAttribLocation(this.program, "a_center");
     const colorLocation = gl.getUniformLocation(this.program, "u_color");
-    const centerLocation = gl.getUniformLocation(this.program, "u_center");
     const scaleLocation = gl.getUniformLocation(this.program, "u_scale");
+    const vertexArray = gl.createVertexArray();
     const positionBuffer = gl.createBuffer();
+    const instanceBuffer = gl.createBuffer();
 
     if (
       positionLocation === -1 ||
+      centerLocation === -1 ||
       !colorLocation ||
-      !centerLocation ||
       !scaleLocation ||
-      !positionBuffer
+      !vertexArray ||
+      !positionBuffer ||
+      !instanceBuffer
     ) {
       throw new Error("Ошибка инициализации WebGL");
     }
 
     this.colorLocation = colorLocation;
-    this.centerLocation = centerLocation;
     this.scaleLocation = scaleLocation;
+    this.vertexArray = vertexArray;
+    this.instanceBuffer = instanceBuffer;
+
+    gl.useProgram(this.program);
+    gl.bindVertexArray(this.vertexArray);
 
     gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
     gl.bufferData(gl.ARRAY_BUFFER, QUAD_VERTICES, gl.STATIC_DRAW);
-    gl.useProgram(this.program);
     gl.enableVertexAttribArray(positionLocation);
     gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, 0, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(centerLocation);
+    gl.vertexAttribPointer(centerLocation, 2, gl.FLOAT, false, 0, 0);
+    gl.vertexAttribDivisor(centerLocation, 1);
+
+    gl.bindVertexArray(null);
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     gl.clearColor(...BACKGROUND_RGB, 1);
@@ -72,6 +87,23 @@ export class AppRender {
 
   get height(): number {
     return this.logicalHeight;
+  }
+
+  configure(config: SimulationConfig): void {
+    const [red, green, blue] = colorToNormalizedRgb(config.color);
+
+    this.radius = config.radius;
+    this.instanceData = new Float32Array(config.objectCount * 2);
+
+    this.gl.useProgram(this.program);
+    this.gl.uniform4f(this.colorLocation, red, green, blue, 1);
+    this.updateCircleScaleByCanvasSize();
+    this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.instanceBuffer);
+    this.gl.bufferData(
+      this.gl.ARRAY_BUFFER,
+      this.instanceData.byteLength,
+      this.gl.DYNAMIC_DRAW,
+    );
   }
 
   resize(width: number, height: number, pixelRatio: number): void {
@@ -94,41 +126,40 @@ export class AppRender {
     this.canvas.width = backingWidth;
     this.canvas.height = backingHeight;
     this.gl.viewport(0, 0, backingWidth, backingHeight);
+    this.updateCircleScaleByCanvasSize();
   }
 
-  render(
-    circles: Circle[],
-    activeCircleId: string | null,
-    currentTime: number,
-  ): void {
+  render(circles: Circle[]): void {
     const gl = this.gl;
-    let activeCircleOpacity = 1;
 
-    if (activeCircleId !== null) {
-      const opacityPulseAngle =
-        (currentTime / ACTIVE_CIRCLE_PULSE_DURATION) * Math.PI * 2;
-      const opacityInterpolationFactor = (Math.sin(opacityPulseAngle) + 1) / 2;
-      activeCircleOpacity =
-        MIN_ACTIVE_CIRCLE_OPACITY +
-        opacityInterpolationFactor *
-          (MAX_ACTIVE_CIRCLE_OPACITY - MIN_ACTIVE_CIRCLE_OPACITY);
+    for (let index = 0; index < circles.length; index += 1) {
+      const circle = circles[index];
+      if (!circle) continue;
+
+      const offset = index * 2;
+      this.instanceData[offset] = this.toClipX(circle.position.x);
+      this.instanceData[offset + 1] = this.toClipY(circle.position.y);
     }
 
     gl.clear(gl.COLOR_BUFFER_BIT);
 
-    for (const circle of circles) {
-      const [red, green, blue] = colorToNormalizedRgb(circle.color);
-      const opacity = circle.id === activeCircleId ? activeCircleOpacity : 1;
-      const centerX = this.toClipX(circle.position.x);
-      const centerY = this.toClipY(circle.position.y);
-      const scaleX = (circle.radius / this.logicalWidth) * 2;
-      const scaleY = (circle.radius / this.logicalHeight) * 2;
+    if (circles.length === 0) return;
 
-      gl.uniform2f(this.centerLocation, centerX, centerY);
-      gl.uniform2f(this.scaleLocation, scaleX, scaleY);
-      gl.uniform4f(this.colorLocation, red, green, blue, opacity);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, this.instanceBuffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, this.instanceData);
+    gl.useProgram(this.program);
+    gl.bindVertexArray(this.vertexArray);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, circles.length);
+    gl.bindVertexArray(null);
+  }
+
+  private updateCircleScaleByCanvasSize(): void {
+    this.gl.useProgram(this.program);
+    this.gl.uniform2f(
+      this.scaleLocation,
+      (this.radius / this.logicalWidth) * 2,
+      (this.radius / this.logicalHeight) * 2,
+    );
   }
 
   private toClipX(x: number): number {
@@ -152,7 +183,7 @@ export class AppRender {
     const program = gl.createProgram();
 
     if (!program) {
-      throw new Error("Не удалось создать WebGL программу");
+      throw new Error("Не удалось создать WebGL-программу");
     }
 
     gl.attachShader(program, vertexShader);
@@ -161,7 +192,7 @@ export class AppRender {
 
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
       throw new Error(
-        gl.getProgramInfoLog(program) ?? "Не удалось привязать программу",
+        gl.getProgramInfoLog(program) ?? "Не удалось связать WebGL-программу",
       );
     }
 
