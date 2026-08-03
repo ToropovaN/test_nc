@@ -4,13 +4,13 @@
 
 ## Демо
 
-> **⚙️ Version 2 - Engineer Edition**  
-> Массовая симуляция однотипных объектов: оптимизация рендеринга и физики  
-> https://toropovan.github.io/test_nc/engineer-edition/
+> **⚙️ <u>Version 2</u> - Engineer Edition** <br>
+> <u>Массовая симуляция однотипных объектов: оптимизация рендеринга и физики</u>  <br>
+> https://toropovan.github.io/test_nc/engineer-edition/ <br>
 
-> 🎨 Version 1 - Frontend Edition  
-> Индивидуальная настройка объектов
-> https://toropovan.github.io/test_nc/frontend-edition/
+> 🎨 Version 1 - Frontend Edition  <br>
+> Индивидуальная настройка объектов <br>
+> https://toropovan.github.io/test_nc/frontend-edition/ <br>
 
 ## Установка
 
