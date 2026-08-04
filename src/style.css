@@ -828,3 +828,83 @@ button {
     transform: none;
   }
 }
+
+@media (max-width: 600px) {
+  #simulationControls {
+    gap: 6px;
+    max-height: 58vh;
+    padding: 6px 8px max(6px, env(safe-area-inset-bottom));
+  }
+
+  .control-button,
+  .start-simulation-button {
+    min-height: 30px;
+    padding-inline: 10px;
+    font-size: 13px;
+  }
+
+  .control-button--reset {
+    flex-basis: 74px;
+  }
+
+  .circle-editor {
+    padding: 8px;
+  }
+
+  .circle-editor__form {
+    grid-template-columns: minmax(0, 1fr) 112px;
+    gap: 8px;
+  }
+
+  .circle-editor__section-label,
+  .circle-editor__quantity-label,
+  .circle-editor__fields .editor-field,
+  .editor-value {
+    font-size: 9px;
+  }
+
+  .circle-editor__fields {
+    gap: 2px;
+  }
+
+  .circle-editor__round-control {
+    grid-template-rows: auto 46px auto;
+  }
+
+  .circle-editor__round-control .direction-dial,
+  .color-input-frame {
+    width: 46px;
+    height: 46px;
+  }
+
+  .circle-editor__round-control:first-child .editor-value output,
+  .circle-editor__round-control:last-child .editor-value output {
+    margin-top: -12px;
+  }
+
+  .circle-editor__round-control .color-input {
+    width: 24px;
+    height: 24px;
+  }
+
+  .color-input-frame::after {
+    bottom: -6px;
+    width: 40px;
+    height: 16px;
+  }
+
+  .quantity-stepper {
+    grid-template-columns: 28px minmax(44px, 1fr) 28px;
+  }
+
+  .quantity-button,
+  .circle-quantity-input {
+    height: 30px;
+    font-size: 11px;
+  }
+
+  .quantity-button .icon {
+    width: 13px;
+    height: 13px;
+  }
+}

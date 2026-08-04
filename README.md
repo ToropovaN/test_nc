@@ -4,7 +4,7 @@
 
 ## Демо
 
-> **⚙️ Version 2 - Engineer Edition**  
+> **⚙️ <u>Version 2</u> - Engineer Edition**  
 > Массовая симуляция однотипных объектов: оптимизация рендеринга и физики  
 > https://toropovan.github.io/test_nc/engineer-edition/
 
